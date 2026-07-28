@@ -27,6 +27,7 @@ Pi Mobile 是一个“手机上的私有 Pi Agent App”项目：手机端提供
 - 支持“新聊天”按钮：不删除旧聊天，创建新的 Pi Agent Session 和独立会话记录。
 - 支持会话列表：展示服务器启动之后创建/迁移的所有聊天会话。
 - 支持会话切换、删除、重命名。
+- 支持在 WebUI 中选择 `~/.pi/agent/models.json` 声明的模型，不向前端暴露 API Key。
 - 支持上传图片：通过 Pi SDK `images` 传给模型。
 - 支持上传文本类文档：前端读取文本内容后拼接进 prompt。
 - 默认只监听 `127.0.0.1:8787`，建议通过 Nginx/Caddy 反代 HTTPS 后访问。
@@ -134,6 +135,22 @@ GET /api/events?token=<token>
 - `error`
 - `raw`
 
+### 获取和切换模型
+
+```http
+GET /api/models
+POST /api/model
+Authorization: Bearer <token>
+```
+
+切换请求示例：
+
+```json
+{"provider":"4Router","id":"gpt-5.5"}
+```
+
+后端只允许选择 `~/.pi/agent/models.json` 中声明的模型，返回结果不包含 `apiKey`、`baseUrl` 或私有 headers。Agent 正在运行时不允许切换模型。
+
 ### 会话列表
 
 ```http
@@ -203,6 +220,8 @@ Authorization: Bearer <token>
 - [x] 聊天会话列表按钮。
 - [x] 每个对话单独保存。
 - [x] 删除和重命名对话。
+- [x] WebUI 模型选择器。
+- [x] models.json 模型白名单与后端切换 API。
 - [x] 上传图片按钮。
 - [x] 上传文档按钮。
 

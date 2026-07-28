@@ -8,6 +8,7 @@ const loginBtn = $("loginBtn");
 const logoutBtn = $("logoutBtn");
 const historyBtn = $("historyBtn");
 const newChatBtn = $("newChatBtn");
+const modelSelect = $("modelSelect");
 const closeHistoryBtn = $("closeHistoryBtn");
 const historyPanel = $("historyPanel");
 const conversationList = $("conversationList");
@@ -339,6 +340,37 @@ function renderConversations() {
   }
 }
 
+async function loadModels() {
+  modelSelect.disabled = true;
+  const data = await api("/api/models");
+  modelSelect.textContent = "";
+  const byProvider = new Map();
+  for (const model of data.models || []) {
+    if (!byProvider.has(model.provider)) byProvider.set(model.provider, []);
+    byProvider.get(model.provider).push(model);
+  }
+  for (const [provider, modelsForProvider] of byProvider) {
+    const group = document.createElement("optgroup");
+    group.label = provider;
+    for (const model of modelsForProvider) {
+      const option = document.createElement("option");
+      option.value = JSON.stringify([model.provider, model.id]);
+      option.textContent = `${model.name || model.id}${model.reasoning ? " · 推理" : ""}${model.input?.includes("image") ? " · 视觉" : ""}`;
+      option.disabled = !model.available;
+      if (model.provider === data.current?.provider && model.id === data.current?.id) option.selected = true;
+      group.appendChild(option);
+    }
+    modelSelect.appendChild(group);
+  }
+  if (!modelSelect.options.length) {
+    const option = document.createElement("option");
+    option.textContent = "models.json 中没有可用模型";
+    modelSelect.appendChild(option);
+  }
+  modelSelect.dataset.current = modelSelect.value;
+  modelSelect.disabled = !data.models?.length;
+}
+
 async function loadConversations() {
   const data = await api("/api/conversations");
   conversations = data.conversations || [];
@@ -352,6 +384,7 @@ async function selectConversation(id) {
   activeConversationId = data.activeId || id;
   renderConversations();
   renderMessages(data.messages || []);
+  await loadModels();
   historyPanel.classList.add("hidden");
   setStatus(`已切换到：${data.conversation?.title || "聊天"}`);
 }
@@ -389,7 +422,7 @@ async function connect() {
     login.classList.add("hidden");
     chat.classList.remove("hidden");
     setStatus(`已连接 · cwd=${state.cwd} · ${state.model?.id || "model?"}`);
-    await loadHistory(state.isStreaming);
+    await Promise.all([loadHistory(state.isStreaming), loadModels()]);
     openEvents();
   } catch (err) {
     localStorage.removeItem("pi_mobile_token");
@@ -445,7 +478,7 @@ function openEvents() {
     const data = JSON.parse(ev.data);
     activeConversationId = data.activeId || activeConversationId;
     renderMessages(data.messages || []);
-    await loadConversations();
+    await Promise.all([loadConversations(), loadModels()]);
     setStatus(`已切换到：${data.conversation?.title || "聊天"}`);
   });
 
@@ -454,6 +487,12 @@ function openEvents() {
     conversations = data.conversations || conversations;
     activeConversationId = data.activeId || activeConversationId;
     renderConversations();
+  });
+
+  events.addEventListener("model_changed", async (ev) => {
+    const model = JSON.parse(ev.data);
+    setStatus(`已切换模型：${model.provider}/${model.id}`);
+    await loadModels();
   });
 
   events.addEventListener("queue_update", (ev) => {
@@ -530,6 +569,25 @@ logoutBtn.onclick = () => {
 };
 
 sendBtn.onclick = sendPrompt;
+modelSelect.onchange = async () => {
+  const previous = modelSelect.dataset.current || "";
+  const [provider, id] = JSON.parse(modelSelect.value);
+  if (!provider || !id) return;
+  modelSelect.disabled = true;
+  try {
+    const data = await api("/api/model", {
+      method: "POST",
+      body: JSON.stringify({ provider, id }),
+    });
+    modelSelect.dataset.current = modelSelect.value;
+    setStatus(`已切换模型：${data.model.provider}/${data.model.id}`);
+  } catch (err) {
+    addMessage("system", `切换模型失败：${err.message}`);
+    if (previous) modelSelect.value = previous;
+  } finally {
+    await loadModels();
+  }
+};
 historyBtn.onclick = async () => {
   try {
     await loadConversations();

@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -11,6 +11,7 @@ const dataDir = path.join(__dirname, "data");
 const conversationsDir = path.join(dataDir, "conversations");
 const indexPath = path.join(conversationsDir, "index.json");
 const legacyChatLogPath = path.join(dataDir, "chat-log.json");
+const modelsPath = "/root/.pi/agent/models.json";
 
 const HOST = process.env.PI_MOBILE_HOST || "127.0.0.1";
 const PORT = Number(process.env.PI_MOBILE_PORT || 8787);
@@ -22,6 +23,7 @@ const conversations = [];
 let activeConversationId;
 let activeMessages = [];
 let session;
+let modelRuntime;
 let sessionReady;
 let sessionError;
 let sessionUnsubscribe;
@@ -81,6 +83,32 @@ async function loadJson(file, fallback) {
     if (err.code !== "ENOENT") console.warn(`Failed to load ${file}:`, err);
     return fallback;
   }
+}
+
+function publicModel(model, configured = {}) {
+  return {
+    provider: model.provider,
+    id: model.id,
+    name: configured.name || model.name || model.id,
+    reasoning: Boolean(configured.reasoning ?? model.reasoning),
+    input: configured.input || model.input || ["text"],
+    contextWindow: configured.contextWindow || model.contextWindow,
+    maxTokens: configured.maxTokens || model.maxTokens,
+    available: modelRuntime.hasConfiguredAuth(model.provider),
+    isCurrent: session?.model?.provider === model.provider && session?.model?.id === model.id,
+  };
+}
+
+async function getConfiguredModels() {
+  const config = await loadJson(modelsPath, { providers: {} });
+  const result = [];
+  for (const [provider, providerConfig] of Object.entries(config.providers || {})) {
+    for (const configured of providerConfig.models || []) {
+      const model = modelRuntime.getModel(provider, configured.id);
+      if (model) result.push(publicModel(model, configured));
+    }
+  }
+  return result;
 }
 
 function persistIndexSoon() {
@@ -226,13 +254,13 @@ async function bindSessionToConversation(id) {
   let manager = meta.sessionFile ? SessionManager.open(meta.sessionFile) : SessionManager.create(CWD);
   let created;
   try {
-    created = await createAgentSession({ cwd: CWD, sessionManager: manager });
+    created = await createAgentSession({ cwd: CWD, sessionManager: manager, modelRuntime });
   } catch (err) {
     console.warn(`Failed to open session file for conversation ${id}, creating a new session:`, err);
     meta.sessionFile = undefined;
     meta.sessionId = undefined;
     manager = SessionManager.create(CWD);
-    created = await createAgentSession({ cwd: CWD, sessionManager: manager });
+    created = await createAgentSession({ cwd: CWD, sessionManager: manager, modelRuntime });
   }
   session = created.session;
   meta.sessionId = session.sessionId;
@@ -251,6 +279,7 @@ async function bindSessionToConversation(id) {
 }
 
 async function initApp() {
+  modelRuntime = await ModelRuntime.create({ modelsPath });
   await loadConversations();
   await bindSessionToConversation(activeConversationId);
 }
@@ -384,6 +413,29 @@ async function handleApi(req, res, url) {
       model: session.model ? { provider: session.model.provider, id: session.model.id, name: session.model.name } : null,
       thinkingLevel: session.thinkingLevel,
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/models") {
+    return sendJson(res, {
+      current: session.model ? { provider: session.model.provider, id: session.model.id, name: session.model.name } : null,
+      models: await getConfiguredModels(),
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/model") {
+    if (session.isStreaming) return sendJson(res, { error: "cannot switch model while agent is running" }, 409);
+    const body = await readJson(req);
+    const provider = String(body.provider || "");
+    const id = String(body.id || "");
+    const configuredModels = await getConfiguredModels();
+    const allowed = configuredModels.some((item) => item.provider === provider && item.id === id);
+    if (!allowed) return sendJson(res, { error: "model is not declared in models.json" }, 400);
+    const model = modelRuntime.getModel(provider, id);
+    if (!model) return sendJson(res, { error: "model not found" }, 404);
+    await session.setModel(model);
+    const selected = publicModel(model);
+    broadcast("model_changed", selected);
+    return sendJson(res, { ok: true, model: selected });
   }
 
   if (req.method === "GET" && url.pathname === "/api/conversations") {
