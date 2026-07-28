@@ -96,17 +96,15 @@ h1 {
   gap: 10px;
   color: #111827;
 }
-h1::before {
-  content: "π";
-  display: inline-grid;
-  place-items: center;
-  width: 31px;
-  height: 31px;
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  display: block;
   border-radius: 10px;
-  background: linear-gradient(135deg, #111827 0%, #0f766e 100%);
-  color: #fff;
-  font-weight: 900;
-  box-shadow: 0 10px 24px rgba(15, 118, 110, .22), inset 0 1px 0 rgba(255,255,255,.2);
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .08), inset 0 1px 0 rgba(255,255,255,.85);
 }
 p { color: var(--muted); }
 #status {
@@ -571,7 +569,7 @@ code { color: #111827; }
   .app { max-width: none; border: 0; }
   .topbar { align-items: flex-start; padding-inline: 12px; }
   h1 { font-size: 19px; }
-  h1::before { width: 29px; height: 29px; border-radius: 10px; }
+  .brand-logo { width: 29px; height: 29px; border-radius: 10px; padding: 4px; }
   #status { margin-left: 39px; max-width: 48vw; }
   .top-actions { max-width: 48%; gap: 6px; }
   .top-actions button { padding: 7px 9px; font-size: 11px; }
