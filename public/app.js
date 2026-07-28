@@ -127,14 +127,39 @@ function renderMarkdown(markdown) {
   return out.join("\n");
 }
 
+function enhanceCodeBlocks(container) {
+  for (const pre of container.querySelectorAll("pre")) {
+    if (pre.classList.contains("code-enhanced")) continue;
+    pre.classList.add("code-enhanced");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "copy-code-btn";
+    btn.textContent = "复制";
+    btn.onclick = async () => {
+      const code = pre.querySelector("code")?.textContent || pre.textContent || "";
+      try {
+        await navigator.clipboard.writeText(code);
+        btn.textContent = "已复制";
+        setTimeout(() => (btn.textContent = "复制"), 1200);
+      } catch {
+        btn.textContent = "复制失败";
+        setTimeout(() => (btn.textContent = "复制"), 1200);
+      }
+    };
+    pre.appendChild(btn);
+  }
+}
+
 function addMessage(role, text = "") {
   const wrap = document.createElement("div");
   wrap.className = `msg ${role}`;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.dataset.raw = text;
-  if (role === "assistant") bubble.innerHTML = renderMarkdown(text);
-  else bubble.textContent = text;
+  if (role === "assistant") {
+    bubble.innerHTML = renderMarkdown(text);
+    enhanceCodeBlocks(bubble);
+  } else bubble.textContent = text;
   wrap.appendChild(bubble);
   const shouldScroll = isNearBottom();
   messages.appendChild(wrap);
@@ -346,6 +371,7 @@ function openEvents() {
     if (!currentAssistant) currentAssistant = addMessage("assistant", "");
     currentAssistant.dataset.raw = (currentAssistant.dataset.raw || "") + data.text;
     currentAssistant.innerHTML = renderMarkdown(currentAssistant.dataset.raw);
+    enhanceCodeBlocks(currentAssistant);
     scrollToBottomIfNeeded(shouldScroll);
   });
 
