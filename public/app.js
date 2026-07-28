@@ -9,6 +9,7 @@ const logoutBtn = $("logoutBtn");
 const historyBtn = $("historyBtn");
 const newChatBtn = $("newChatBtn");
 const modelSelect = $("modelSelect");
+const thinkingSelect = $("thinkingSelect");
 const closeHistoryBtn = $("closeHistoryBtn");
 const historyPanel = $("historyPanel");
 const conversationList = $("conversationList");
@@ -340,6 +341,37 @@ function renderConversations() {
   }
 }
 
+const thinkingLabels = {
+  off: "关闭",
+  minimal: "极低",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "极高",
+  max: "最大",
+};
+
+async function loadThinking() {
+  thinkingSelect.disabled = true;
+  const data = await api("/api/thinking");
+  thinkingSelect.textContent = "";
+  for (const level of data.levels || []) {
+    const option = document.createElement("option");
+    option.value = level;
+    option.textContent = thinkingLabels[level] || level;
+    option.selected = level === data.current;
+    thinkingSelect.appendChild(option);
+  }
+  if (!thinkingSelect.options.length) {
+    const option = document.createElement("option");
+    option.value = "off";
+    option.textContent = "不可用";
+    thinkingSelect.appendChild(option);
+  }
+  thinkingSelect.dataset.current = thinkingSelect.value;
+  thinkingSelect.disabled = !(data.levels?.length > 1);
+}
+
 async function loadModels() {
   modelSelect.disabled = true;
   const data = await api("/api/models");
@@ -384,7 +416,7 @@ async function selectConversation(id) {
   activeConversationId = data.activeId || id;
   renderConversations();
   renderMessages(data.messages || []);
-  await loadModels();
+  await Promise.all([loadModels(), loadThinking()]);
   historyPanel.classList.add("hidden");
   setStatus(`已切换到：${data.conversation?.title || "聊天"}`);
 }
@@ -422,7 +454,7 @@ async function connect() {
     login.classList.add("hidden");
     chat.classList.remove("hidden");
     setStatus(`已连接 · cwd=${state.cwd} · ${state.model?.id || "model?"}`);
-    await Promise.all([loadHistory(state.isStreaming), loadModels()]);
+    await Promise.all([loadHistory(state.isStreaming), loadModels(), loadThinking()]);
     openEvents();
   } catch (err) {
     localStorage.removeItem("pi_mobile_token");
@@ -478,7 +510,7 @@ function openEvents() {
     const data = JSON.parse(ev.data);
     activeConversationId = data.activeId || activeConversationId;
     renderMessages(data.messages || []);
-    await Promise.all([loadConversations(), loadModels()]);
+    await Promise.all([loadConversations(), loadModels(), loadThinking()]);
     setStatus(`已切换到：${data.conversation?.title || "聊天"}`);
   });
 
@@ -492,7 +524,13 @@ function openEvents() {
   events.addEventListener("model_changed", async (ev) => {
     const model = JSON.parse(ev.data);
     setStatus(`已切换模型：${model.provider}/${model.id}`);
-    await loadModels();
+    await Promise.all([loadModels(), loadThinking()]);
+  });
+
+  events.addEventListener("thinking_changed", async (ev) => {
+    const thinking = JSON.parse(ev.data);
+    setStatus(`思考强度：${thinkingLabels[thinking.current] || thinking.current}`);
+    await loadThinking();
   });
 
   events.addEventListener("queue_update", (ev) => {
@@ -569,6 +607,24 @@ logoutBtn.onclick = () => {
 };
 
 sendBtn.onclick = sendPrompt;
+thinkingSelect.onchange = async () => {
+  const previous = thinkingSelect.dataset.current || "";
+  const level = thinkingSelect.value;
+  thinkingSelect.disabled = true;
+  try {
+    const data = await api("/api/thinking", {
+      method: "POST",
+      body: JSON.stringify({ level }),
+    });
+    thinkingSelect.dataset.current = data.current;
+    setStatus(`思考强度：${thinkingLabels[data.current] || data.current}`);
+  } catch (err) {
+    addMessage("system", `切换思考强度失败：${err.message}`);
+    if (previous) thinkingSelect.value = previous;
+  } finally {
+    await loadThinking();
+  }
+};
 modelSelect.onchange = async () => {
   const previous = modelSelect.dataset.current || "";
   const [provider, id] = JSON.parse(modelSelect.value);
@@ -585,7 +641,7 @@ modelSelect.onchange = async () => {
     addMessage("system", `切换模型失败：${err.message}`);
     if (previous) modelSelect.value = previous;
   } finally {
-    await loadModels();
+    await Promise.all([loadModels(), loadThinking()]);
   }
 };
 historyBtn.onclick = async () => {

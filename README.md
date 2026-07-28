@@ -28,6 +28,7 @@ Pi Mobile 是一个“手机上的私有 Pi Agent App”项目：手机端提供
 - 支持会话列表：展示服务器启动之后创建/迁移的所有聊天会话。
 - 支持会话切换、删除、重命名。
 - 支持在 WebUI 中选择 `~/.pi/agent/models.json` 声明的模型，不向前端暴露 API Key。
+- 支持在 WebUI 中调整当前模型的思考强度，并根据模型能力动态显示可用级别。
 - 支持上传图片：通过 Pi SDK `images` 传给模型。
 - 支持上传文本类文档：前端读取文本内容后拼接进 prompt。
 - 默认只监听 `127.0.0.1:8787`，建议通过 Nginx/Caddy 反代 HTTPS 后访问。
@@ -151,6 +152,22 @@ Authorization: Bearer <token>
 
 后端只允许选择 `~/.pi/agent/models.json` 中声明的模型，返回结果不包含 `apiKey`、`baseUrl` 或私有 headers。Agent 正在运行时不允许切换模型。
 
+### 获取和切换思考强度
+
+```http
+GET /api/thinking
+POST /api/thinking
+Authorization: Bearer <token>
+```
+
+切换请求示例：
+
+```json
+{"level":"high"}
+```
+
+可能的强度值为 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，实际可选值由当前模型的 `session.getAvailableThinkingLevels()` 决定。Agent 正在运行时不允许切换。
+
 ### 会话列表
 
 ```http
@@ -222,6 +239,7 @@ Authorization: Bearer <token>
 - [x] 删除和重命名对话。
 - [x] WebUI 模型选择器。
 - [x] models.json 模型白名单与后端切换 API。
+- [x] WebUI 思考强度选择器和后端切换 API。
 - [x] 上传图片按钮。
 - [x] 上传文档按钮。
 

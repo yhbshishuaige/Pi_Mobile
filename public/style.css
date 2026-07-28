@@ -136,7 +136,8 @@ p { color: var(--muted); }
   padding: 8px 12px;
   font-size: 12px;
 }
-.model-picker {
+.model-picker,
+.thinking-picker {
   height: 34px;
   display: inline-flex;
   align-items: center;
@@ -148,9 +149,8 @@ p { color: var(--muted); }
   color: var(--muted);
   font-size: 12px;
 }
-.model-picker select {
-  min-width: 140px;
-  max-width: 230px;
+.model-picker select,
+.thinking-picker select {
   border: 0;
   outline: 0;
   color: #111827;
@@ -159,7 +159,16 @@ p { color: var(--muted); }
   font-weight: 700;
   cursor: pointer;
 }
-.model-picker select:disabled {
+.model-picker select {
+  min-width: 140px;
+  max-width: 230px;
+}
+.thinking-picker select {
+  min-width: 64px;
+  max-width: 95px;
+}
+.model-picker select:disabled,
+.thinking-picker select:disabled {
   cursor: wait;
   color: var(--muted);
 }
@@ -521,12 +530,14 @@ code { color: #111827; }
     padding: 9px 14px;
     font-size: 13px;
   }
-  .model-picker {
+  .model-picker,
+  .thinking-picker {
     height: 38px;
     padding-inline: 12px;
     font-size: 13px;
   }
   .model-picker select { min-width: 170px; }
+  .thinking-picker select { min-width: 70px; }
   .chat {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -612,18 +623,23 @@ code { color: #111827; }
   #status { margin-left: 39px; max-width: 48vw; }
   .top-actions { max-width: 58%; gap: 6px; }
   .top-actions button { padding: 7px 9px; font-size: 11px; }
-  .model-picker {
-    order: 4;
-    width: 100%;
+  .model-picker,
+  .thinking-picker {
     height: 31px;
     padding-inline: 9px;
     justify-content: flex-end;
     font-size: 11px;
   }
+  .model-picker {
+    order: 4;
+    width: 100%;
+  }
+  .thinking-picker { order: 5; }
   .model-picker select {
     min-width: 0;
     max-width: calc(100% - 34px);
   }
+  .thinking-picker select { min-width: 56px; }
   .messages { padding: 14px 12px 20px; }
   .bubble { max-width: 90%; padding: 12px 13px; font-size: 15px; }
   .msg.system .bubble, .msg.tool .bubble { max-width: 100%; }

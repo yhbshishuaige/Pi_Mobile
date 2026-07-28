@@ -412,7 +412,27 @@ async function handleApi(req, res, url) {
       isStreaming: session.isStreaming,
       model: session.model ? { provider: session.model.provider, id: session.model.id, name: session.model.name } : null,
       thinkingLevel: session.thinkingLevel,
+      availableThinkingLevels: session.getAvailableThinkingLevels(),
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/thinking") {
+    return sendJson(res, {
+      current: session.thinkingLevel,
+      levels: session.getAvailableThinkingLevels(),
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/thinking") {
+    if (session.isStreaming) return sendJson(res, { error: "cannot switch thinking level while agent is running" }, 409);
+    const body = await readJson(req);
+    const level = String(body.level || "");
+    const levels = session.getAvailableThinkingLevels();
+    if (!levels.includes(level)) return sendJson(res, { error: "thinking level is not supported by current model", levels }, 400);
+    session.setThinkingLevel(level);
+    const data = { current: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
+    broadcast("thinking_changed", data);
+    return sendJson(res, { ok: true, ...data });
   }
 
   if (req.method === "GET" && url.pathname === "/api/models") {
@@ -434,8 +454,10 @@ async function handleApi(req, res, url) {
     if (!model) return sendJson(res, { error: "model not found" }, 404);
     await session.setModel(model);
     const selected = publicModel(model);
-    broadcast("model_changed", selected);
-    return sendJson(res, { ok: true, model: selected });
+    const thinking = { current: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
+    broadcast("model_changed", { ...selected, thinking });
+    broadcast("thinking_changed", thinking);
+    return sendJson(res, { ok: true, model: selected, thinking });
   }
 
   if (req.method === "GET" && url.pathname === "/api/conversations") {
