@@ -391,7 +391,13 @@ button.danger { color: var(--danger); }
   border: 1px solid var(--border);
   position: relative;
 }
-.bubble pre code { padding: 0; background: transparent; color: #202124; }
+.bubble pre code,
+.bubble pre code.hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: #202124;
+}
 .copy-code-btn {
   position: absolute;
   top: 8px;

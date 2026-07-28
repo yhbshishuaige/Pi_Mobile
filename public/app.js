@@ -66,6 +66,7 @@ function renderMarkdown(markdown) {
   const out = [];
   let inCode = false;
   let code = [];
+  let codeLang = "";
   let inList = false;
 
   const closeList = () => {
@@ -76,14 +77,17 @@ function renderMarkdown(markdown) {
   };
 
   for (const line of lines) {
-    const fence = line.match(/^```(.*)$/);
+    const fence = line.match(/^```\s*([\w#+.-]*)\s*$/);
     if (fence) {
       if (inCode) {
-        out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+        const langClass = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
+        out.push(`<pre><code${langClass}>${escapeHtml(code.join("\n"))}</code></pre>`);
         code = [];
+        codeLang = "";
         inCode = false;
       } else {
         closeList();
+        codeLang = normalizeCodeLang(fence[1] || "");
         inCode = true;
       }
       continue;
@@ -123,8 +127,26 @@ function renderMarkdown(markdown) {
   }
 
   closeList();
-  if (inCode) out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+  if (inCode) {
+    const langClass = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : "";
+    out.push(`<pre><code${langClass}>${escapeHtml(code.join("\n"))}</code></pre>`);
+  }
   return out.join("\n");
+}
+
+function normalizeCodeLang(lang) {
+  const aliases = {
+    js: "javascript",
+    ts: "typescript",
+    py: "python",
+    sh: "bash",
+    shell: "bash",
+    zsh: "bash",
+    yml: "yaml",
+    md: "markdown",
+  };
+  const clean = String(lang || "").trim().toLowerCase();
+  return aliases[clean] || clean;
 }
 
 async function copyText(text) {
@@ -152,6 +174,10 @@ async function copyText(text) {
 
 function enhanceCodeBlocks(container) {
   for (const pre of container.querySelectorAll("pre")) {
+    const codeEl = pre.querySelector("code");
+    if (codeEl && window.hljs && !codeEl.dataset.highlighted) {
+      window.hljs.highlightElement(codeEl);
+    }
     if (pre.classList.contains("code-enhanced")) continue;
     pre.classList.add("code-enhanced");
     const btn = document.createElement("button");
