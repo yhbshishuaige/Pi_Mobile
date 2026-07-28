@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Pi Mobile</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>Pi Mobile</h1>
+          <p id="status">未连接</p>
+        </div>
+        <div class="top-actions">
+          <button id="historyBtn" class="ghost">会话</button>
+          <button id="newChatBtn" class="ghost">＋ 新聊天</button>
+          <button id="logoutBtn" class="ghost">退出</button>
+        </div>
+      </header>
+
+      <section id="login" class="login card">
+        <h2>登录</h2>
+        <p>输入服务器端配置的 <code>PI_MOBILE_TOKEN</code>。</p>
+        <input id="tokenInput" type="password" placeholder="Access token" autocomplete="current-password" />
+        <button id="loginBtn">进入</button>
+      </section>
+
+      <section id="chat" class="chat hidden">
+        <aside id="historyPanel" class="history-panel hidden">
+          <div class="history-head">
+            <strong>聊天会话</strong>
+            <button id="closeHistoryBtn" class="ghost">关闭</button>
+          </div>
+          <div id="conversationList" class="conversation-list"></div>
+        </aside>
+        <div id="messages" class="messages"></div>
+        <div class="composer">
+          <textarea id="promptInput" rows="1" placeholder="问 Pi Agent，例如：看看服务器上运行了什么服务"></textarea>
+          <input id="imageInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
+          <input id="docInput" class="hidden" type="file" accept=".txt,.md,.json,.yaml,.yml,.csv,.log,.js,.ts,.py,.sh,.html,.css,.xml,.conf,.ini" multiple />
+          <div id="attachments" class="attachments"></div>
+          <div class="actions">
+            <button id="imageBtn" class="ghost">图片</button>
+            <button id="docBtn" class="ghost">文档</button>
+            <button id="abortBtn" class="ghost danger">停止</button>
+            <button id="sendBtn">发送</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

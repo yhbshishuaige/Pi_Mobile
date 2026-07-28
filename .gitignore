@@ -1,0 +1,11 @@
+node_modules/
+.env
+*.log
+.DS_Store
+
+# Runtime data and private chat/session records
+data/
+
+# Local editor files
+.vscode/
+.idea/
