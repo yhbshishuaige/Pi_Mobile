@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Pi Mobile">
+  <rect width="64" height="64" rx="16" fill="#f7f7f4"/>
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="#ffffff" stroke="#d7dad4" stroke-width="2"/>
+  <path fill="#111827" fill-rule="evenodd" d="M13 13h28v19h-9v9h-9v10H13V13Zm10 10v9h9v-9h-9Z"/>
+  <path fill="#0f766e" d="M41 32h10v19H41V32Z"/>
+</svg>
