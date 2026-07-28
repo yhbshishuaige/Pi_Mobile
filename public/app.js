@@ -127,6 +127,29 @@ function renderMarkdown(markdown) {
   return out.join("\n");
 }
 
+async function copyText(text) {
+  // navigator.clipboard only works in secure contexts (HTTPS/localhost).
+  // The app is often opened via http://server-ip, so keep an execCommand fallback.
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  const ok = document.execCommand("copy");
+  textarea.remove();
+  if (!ok) throw new Error("copy command failed");
+}
+
 function enhanceCodeBlocks(container) {
   for (const pre of container.querySelectorAll("pre")) {
     if (pre.classList.contains("code-enhanced")) continue;
@@ -136,12 +159,13 @@ function enhanceCodeBlocks(container) {
     btn.className = "copy-code-btn";
     btn.textContent = "复制";
     btn.onclick = async () => {
-      const code = pre.querySelector("code")?.textContent || pre.textContent || "";
+      const code = pre.querySelector("code")?.textContent || "";
       try {
-        await navigator.clipboard.writeText(code);
+        await copyText(code);
         btn.textContent = "已复制";
         setTimeout(() => (btn.textContent = "复制"), 1200);
-      } catch {
+      } catch (err) {
+        console.warn("copy failed", err);
         btn.textContent = "复制失败";
         setTimeout(() => (btn.textContent = "复制"), 1200);
       }
