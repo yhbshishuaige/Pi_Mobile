@@ -44,6 +44,8 @@ Pi Mobile 是一个“手机上的私有 Pi Agent App”项目：手机端提供
 │   ├── index.html         # 手机 Web UI
 │   ├── app.js             # 前端逻辑
 │   └── style.css          # 前端样式
+├── capacitor.config.json  # Capacitor 原生客户端配置（本地开发中，未提交）
+├── android/               # Capacitor 生成的 Android 工程（本地开发中，未提交）
 └── data
     ├── sessions           # 预留：未来保存/管理 Pi 会话
     └── conversations       # Pi Mobile 会话索引和每个会话的展示消息
@@ -277,7 +279,91 @@ Authorization: Bearer <token>
 - [ ] 工具调用折叠/展开。
 - [ ] 图片上传，映射到 Pi SDK images。
 
-### Phase 5：通知和自动化
+### Phase 5：Android 原生 App（进行中，改在本地电脑继续）
+
+目标：用 Capacitor 将现有 WebUI 打包为私用 Android App。Agent、模型凭据、会话和服务器操作能力仍留在服务器；App 只是原生客户端。
+
+当前已完成但尚未提交的本地工作：
+
+- [x] 安装 `@capacitor/core`、`@capacitor/cli`、`@capacitor/android`。
+- [x] 创建 `capacitor.config.json`：App ID 为 `com.pimobile.agent`，名称为 `Pi Mobile`。
+- [x] 执行 `npx cap add android`，生成 `android/` 原生工程。
+- [x] 前端识别 Capacitor 环境后，默认使用 `http://39.105.119.235:8787` 作为 API Base URL；浏览器模式继续使用同源 `/api/...`。
+- [x] Android Manifest 已设置 `android:usesCleartextTraffic="true"`，因为目前按个人使用需求直接通过服务器 IP 使用 HTTP。
+- [x] 后端本地改动已添加 CORS 与 `OPTIONS` 预检支持，允许 Capacitor WebView 调用 API。
+- [x] 服务器侧已安装 Java 17、Gradle 8.14.3 wrapper、Android SDK Platform 36、Build Tools 36.0.0。
+- [ ] 尚未成功生成 `app-debug.apk`；没有构建错误结论，也没有 APK 产物。
+
+停止原因：Android Gradle 首次构建会下载/解析大量依赖，服务器 CPU 使用率被占满。不要继续在服务器构建 APK。
+
+在个人电脑继续的建议流程：
+
+1. 从本仓库拉取最新 `main`。
+2. 安装 Node.js 20+、JDK 17、Android Studio 和 Android SDK Platform 36 / Build Tools 36.0.0。
+3. 安装 Capacitor 依赖：
+
+   ```bash
+   npm install @capacitor/core @capacitor/cli @capacitor/android
+   ```
+
+4. 创建 `capacitor.config.json`：
+
+   ```json
+   {
+     "appId": "com.pimobile.agent",
+     "appName": "Pi Mobile",
+     "webDir": "public",
+     "server": {
+       "androidScheme": "http",
+       "cleartext": true
+     },
+     "android": {
+       "allowMixedContent": true
+     }
+   }
+   ```
+
+5. 将前端 API 请求抽成 `API_BASE`：Capacitor 环境使用 `http://39.105.119.235:8787`，浏览器环境保留空字符串以使用同源 API。SSE 也必须使用同一个完整 API Base URL。
+6. 后端为 `/api/*` 增加 CORS 和 `OPTIONS` 支持，至少允许 `capacitor://localhost`、`http://localhost`，并允许 `Authorization`、`Content-Type` 请求头。SSE 响应也要带相同 CORS headers。
+7. 创建原生工程并同步静态资源：
+
+   ```bash
+   npx cap add android
+   npx cap sync android
+   ```
+
+8. 在 Android 工程的 `AndroidManifest.xml` 的 `<application>` 上设置：
+
+   ```xml
+   android:usesCleartextTraffic="true"
+   ```
+
+9. 用 Android Studio 打开 `android/`，确认 SDK 路径后执行 Build > Build APK(s)，或命令行执行：
+
+   ```bash
+   cd android
+   ./gradlew assembleDebug
+   ```
+
+10. 成功后 APK 路径为：
+
+   ```text
+   android/app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+需要重点验证：
+
+- App 可以登录并加载历史会话。
+- SSE 流式输出可用。
+- `Authorization: Bearer <token>` 在 Capacitor WebView 中被正确带上。
+- 模型和思考强度选择器可用。
+- 图片/文档选择器在 Android WebView 中可用。
+- 手机能访问服务器 IP 和 `8787` 端口。
+- HTTP 明文访问仅适用于私用测试；Token 会明文传输，后续仍应改为 HTTPS。
+
+本轮 Android 相关代码、`android/`、Capacitor 依赖和 CORS 改动目前只存在服务器本地工作区，按当前要求不会上传 GitHub。接手者应在本地电脑重新实现或从这台服务器复制工作区后继续。
+
+### Phase 6：通知和自动化
 
 - [ ] ntfy/Bark/Telegram 推送。
 - [ ] 长任务完成通知。
