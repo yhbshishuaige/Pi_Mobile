@@ -1,0 +1,12 @@
+{
+  "appId": "com.pimobile.agent",
+  "appName": "Pi Mobile",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

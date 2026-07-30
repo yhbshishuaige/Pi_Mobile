@@ -27,18 +27,17 @@ body {
   margin: 0;
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(56, 189, 248, 0.16), transparent 32%),
-    radial-gradient(circle at 88% 12%, rgba(20, 184, 166, 0.12), transparent 34%),
-    radial-gradient(circle at 50% 100%, rgba(17, 24, 39, 0.08), transparent 36%),
-    linear-gradient(180deg, var(--bg-soft) 0%, var(--bg) 100%);
+  background: var(--bg);
   overflow: hidden;
 }
-body::before {
+body::before,
+body::after {
   content: "";
   position: fixed;
-  inset: -35%;
   pointer-events: none;
+}
+body::before {
+  inset: -35%;
   background:
     conic-gradient(from 180deg at 50% 50%, transparent 0deg, rgba(56,189,248,.13) 70deg, transparent 130deg, rgba(20,184,166,.12) 230deg, transparent 310deg),
     radial-gradient(circle, rgba(255,255,255,.72), transparent 32%);
@@ -47,15 +46,103 @@ body::before {
   animation: aurora 18s linear infinite;
 }
 body::after {
-  content: "";
-  position: fixed;
   inset: 0;
-  pointer-events: none;
   background-image:
     linear-gradient(rgba(17,24,39,0.035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(17,24,39,0.035) 1px, transparent 1px);
   background-size: 44px 44px;
   mask-image: radial-gradient(circle at top, black, transparent 72%);
+}
+body.native-app {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: pan-y;
+}
+body.native-app::before,
+body.native-app::after {
+  display: none;
+}
+body.native-app .app {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  box-shadow: none;
+}
+body.native-app .topbar,
+body.native-app .topbar > div,
+body.native-app .chat,
+body.native-app .messages,
+body.native-app .composer,
+body.native-app .bubble {
+  min-width: 0;
+  max-width: 100%;
+}
+body.native-app .topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  overflow: hidden;
+  padding: max(10px, env(safe-area-inset-top)) 10px 10px;
+}
+body.native-app h1 {
+  min-width: 0;
+  font-size: 20px;
+  line-height: 1.1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.native-app #status,
+body.native-app .model-picker,
+body.native-app .thinking-picker,
+body.native-app .cwd-picker {
+  display: none;
+}
+body.native-app .top-actions {
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  justify-content: flex-end;
+  overflow: visible;
+}
+body.native-app .top-actions button {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+body.native-app .brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  padding: 4px;
+}
+body.native-app .messages {
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+body.native-app .msg,
+body.native-app .bubble {
+  max-width: 100%;
+}
+body.native-app .bubble pre {
+  max-width: 100%;
+  overflow-x: auto;
 }
 @keyframes aurora {
   from { transform: rotate(0deg) scale(1); }
@@ -137,7 +224,8 @@ p { color: var(--muted); }
   font-size: 12px;
 }
 .model-picker,
-.thinking-picker {
+.thinking-picker,
+.cwd-picker {
   height: 34px;
   display: inline-flex;
   align-items: center;
@@ -150,14 +238,25 @@ p { color: var(--muted); }
   font-size: 12px;
 }
 .model-picker select,
-.thinking-picker select {
+.thinking-picker select,
+.cwd-picker input {
   border: 0;
   outline: 0;
   color: #111827;
   background: transparent;
   font: inherit;
   font-weight: 700;
-  cursor: pointer;
+}
+.model-picker select,
+.thinking-picker select { cursor: pointer; }
+.cwd-picker input {
+  width: 170px;
+  min-width: 90px;
+  padding: 0;
+}
+.cwd-picker button {
+  padding: 4px 8px;
+  font-size: 11px;
 }
 .model-picker select {
   min-width: 140px;
@@ -168,7 +267,8 @@ p { color: var(--muted); }
   max-width: 95px;
 }
 .model-picker select:disabled,
-.thinking-picker select:disabled {
+.thinking-picker select:disabled,
+.cwd-picker input:disabled {
   cursor: wait;
   color: var(--muted);
 }
@@ -531,13 +631,15 @@ code { color: #111827; }
     font-size: 13px;
   }
   .model-picker,
-  .thinking-picker {
+  .thinking-picker,
+  .cwd-picker {
     height: 38px;
     padding-inline: 12px;
     font-size: 13px;
   }
   .model-picker select { min-width: 170px; }
   .thinking-picker select { min-width: 70px; }
+  .cwd-picker input { width: 210px; }
   .chat {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -621,24 +723,32 @@ code { color: #111827; }
   h1 { font-size: 19px; }
   .brand-logo { width: 29px; height: 29px; border-radius: 10px; padding: 4px; }
   #status { margin-left: 39px; max-width: 48vw; }
-  .top-actions { max-width: 58%; gap: 6px; }
+  .top-actions { max-width: 58%; min-width: 0; gap: 6px; overflow: hidden; }
   .top-actions button { padding: 7px 9px; font-size: 11px; }
   .model-picker,
-  .thinking-picker {
+  .thinking-picker,
+  .cwd-picker {
     height: 31px;
     padding-inline: 9px;
     justify-content: flex-end;
     font-size: 11px;
   }
-  .model-picker {
+  .model-picker,
+  .cwd-picker {
     order: 4;
     width: 100%;
+    min-width: 0;
   }
   .thinking-picker { order: 5; }
-  .model-picker select {
+  .cwd-picker { order: 6; }
+  .model-picker select,
+  .cwd-picker input {
+    width: 100%;
     min-width: 0;
     max-width: calc(100% - 34px);
   }
+  .cwd-picker input { flex: 1; width: auto; }
+  .cwd-picker button { padding: 3px 7px; font-size: 10px; }
   .thinking-picker select { min-width: 56px; }
   .messages { padding: 14px 12px 20px; }
   .bubble { max-width: 90%; padding: 12px 13px; font-size: 15px; }

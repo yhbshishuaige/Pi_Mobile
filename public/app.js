@@ -1,3 +1,16 @@
+const CAPACITOR_API_BASE = "http://39.105.119.235:8787";
+const LOCAL_APP_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const IS_NATIVE_APP =
+  window.Capacitor?.isNativePlatform?.() ||
+  window.location.protocol === "capacitor:" ||
+  LOCAL_APP_HOSTS.has(window.location.hostname);
+const API_BASE = IS_NATIVE_APP ? CAPACITOR_API_BASE : "";
+const apiUrl = (path) => `${API_BASE}${path}`;
+
+if (IS_NATIVE_APP && document.body) {
+  document.body.classList.add("native-app");
+}
+
 const $ = (id) => document.getElementById(id);
 
 const login = $("login");
@@ -10,6 +23,8 @@ const historyBtn = $("historyBtn");
 const newChatBtn = $("newChatBtn");
 const modelSelect = $("modelSelect");
 const thinkingSelect = $("thinkingSelect");
+const cwdInput = $("cwdInput");
+const cwdBtn = $("cwdBtn");
 const closeHistoryBtn = $("closeHistoryBtn");
 const historyPanel = $("historyPanel");
 const conversationList = $("conversationList");
@@ -29,6 +44,7 @@ let currentAssistant;
 let attachments = [];
 let conversations = [];
 let activeConversationId = "";
+let cwdApiAvailable = true;
 
 function isNearBottom() {
   return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
@@ -287,7 +303,8 @@ async function addDocFiles(files) {
 }
 
 async function api(path, options = {}) {
-  const res = await fetch(path, {
+  const url = apiUrl(path);
+  const res = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -297,7 +314,7 @@ async function api(path, options = {}) {
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw new Error(`${data.error || res.statusText} (${url})`);
   return data;
 }
 
@@ -407,7 +424,51 @@ async function loadConversations() {
   const data = await api("/api/conversations");
   conversations = data.conversations || [];
   activeConversationId = data.activeId || "";
+  const active = conversations.find((item) => item.id === activeConversationId);
+  if (active?.cwd) cwdInput.value = active.cwd;
   renderConversations();
+}
+
+async function loadCwd() {
+  try {
+    const data = await api("/api/cwd");
+    cwdApiAvailable = true;
+    cwdInput.disabled = false;
+    cwdBtn.disabled = false;
+    cwdInput.value = data.cwd || cwdInput.value || "";
+    cwdInput.title = (data.allowlist || []).length ? `允许范围：${data.allowlist.join(", ")}` : "工作目录";
+    return data;
+  } catch (err) {
+    if (/not found/i.test(err.message)) {
+      cwdApiAvailable = false;
+      cwdInput.disabled = true;
+      cwdBtn.disabled = true;
+      cwdInput.title = "当前服务器版本不支持切换工作目录";
+      return { cwd: cwdInput.value, allowlist: [] };
+    }
+    throw err;
+  }
+}
+
+async function switchCwd() {
+  if (!cwdApiAvailable) {
+    addMessage("system", "当前服务器版本不支持切换工作目录。");
+    return;
+  }
+  const cwd = cwdInput.value.trim();
+  if (!cwd) return;
+  cwdBtn.disabled = true;
+  try {
+    const data = await api("/api/cwd", { method: "POST", body: JSON.stringify({ cwd }) });
+    cwdInput.value = data.cwd || cwd;
+    if (data.messages) renderMessages(data.messages);
+    await Promise.all([loadConversations(), loadModels(), loadThinking()]);
+    setStatus(`工作目录已切换：${data.cwd || cwd}`);
+  } catch (err) {
+    addMessage("system", `切换工作目录失败：${err.message}`);
+  } finally {
+    cwdBtn.disabled = false;
+  }
 }
 
 async function selectConversation(id) {
@@ -416,6 +477,7 @@ async function selectConversation(id) {
   activeConversationId = data.activeId || id;
   renderConversations();
   renderMessages(data.messages || []);
+  if (data.conversation?.cwd) cwdInput.value = data.conversation.cwd;
   await Promise.all([loadModels(), loadThinking()]);
   historyPanel.classList.add("hidden");
   setStatus(`已切换到：${data.conversation?.title || "聊天"}`);
@@ -453,14 +515,17 @@ async function connect() {
     const state = await api("/api/state");
     login.classList.add("hidden");
     chat.classList.remove("hidden");
-    setStatus(`已连接 · cwd=${state.cwd} · ${state.model?.id || "model?"}`);
+    cwdInput.value = state.cwd || "";
+    cwdInput.title = (state.cwdAllowlist || []).length ? `允许范围：${state.cwdAllowlist.join(", ")}` : "工作目录";
+    setStatus(`已连接 · api=${API_BASE || "同源"} · cwd=${state.cwd} · ${state.model?.id || "model?"}`);
     await Promise.all([loadHistory(state.isStreaming), loadModels(), loadThinking()]);
+    await loadCwd();
     openEvents();
   } catch (err) {
     localStorage.removeItem("pi_mobile_token");
     token = "";
     showLogin();
-    setStatus(`登录失败：${err.message}`);
+    setStatus(`登录失败：${err.message} · api=${API_BASE || "同源"} · host=${window.location.host}`);
   }
 }
 
@@ -473,10 +538,11 @@ function showLogin() {
 
 function openEvents() {
   events?.close();
-  events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+  events = new EventSource(apiUrl(`/api/events?token=${encodeURIComponent(token)}`));
 
   events.addEventListener("ready", (ev) => {
     const data = JSON.parse(ev.data);
+    if (data.cwd) cwdInput.value = data.cwd;
     setStatus(`事件流已连接 · cwd=${data.cwd}`);
   });
 
@@ -509,6 +575,7 @@ function openEvents() {
   events.addEventListener("chat_switched", async (ev) => {
     const data = JSON.parse(ev.data);
     activeConversationId = data.activeId || activeConversationId;
+    if (data.conversation?.cwd) cwdInput.value = data.conversation.cwd;
     renderMessages(data.messages || []);
     await Promise.all([loadConversations(), loadModels(), loadThinking()]);
     setStatus(`已切换到：${data.conversation?.title || "聊天"}`);
@@ -531,6 +598,14 @@ function openEvents() {
     const thinking = JSON.parse(ev.data);
     setStatus(`思考强度：${thinkingLabels[thinking.current] || thinking.current}`);
     await loadThinking();
+  });
+
+  events.addEventListener("cwd_changed", async (ev) => {
+    const data = JSON.parse(ev.data);
+    cwdInput.value = data.cwd || "";
+    if (data.messages) renderMessages(data.messages);
+    await loadConversations();
+    setStatus(`工作目录：${data.cwd}`);
   });
 
   events.addEventListener("queue_update", (ev) => {
@@ -607,6 +682,13 @@ logoutBtn.onclick = () => {
 };
 
 sendBtn.onclick = sendPrompt;
+cwdBtn.onclick = switchCwd;
+cwdInput.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    switchCwd();
+  }
+});
 thinkingSelect.onchange = async () => {
   const previous = thinkingSelect.dataset.current || "";
   const level = thinkingSelect.value;
@@ -656,7 +738,7 @@ historyBtn.onclick = async () => {
 closeHistoryBtn.onclick = () => historyPanel.classList.add("hidden");
 newChatBtn.onclick = async () => {
   try {
-    const data = await api("/api/new-chat", { method: "POST", body: "{}" });
+    const data = await api("/api/new-chat", { method: "POST", body: JSON.stringify({ cwd: cwdInput.value.trim() }) });
     activeConversationId = data.activeId;
     messages.textContent = "";
     currentAssistant = null;
@@ -696,5 +778,9 @@ promptInput.addEventListener("input", () => {
   promptInput.style.height = "auto";
   promptInput.style.height = `${promptInput.scrollHeight}px`;
 });
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch((err) => console.warn("service worker registration failed", err));
+}
 
 connect();

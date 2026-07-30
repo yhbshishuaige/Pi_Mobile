@@ -1,6 +1,7 @@
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs/promises";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createAgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
@@ -17,9 +18,12 @@ const HOST = process.env.PI_MOBILE_HOST || "127.0.0.1";
 const PORT = Number(process.env.PI_MOBILE_PORT || 8787);
 const TOKEN = process.env.PI_MOBILE_TOKEN || "dev-token-change-me";
 const CWD = process.env.PI_MOBILE_CWD || "/root";
+const CWD_ALLOWLIST = process.env.PI_MOBILE_CWD_ALLOWLIST || CWD;
+const CORS_ORIGINS = process.env.PI_MOBILE_CORS_ORIGINS || "capacitor://localhost,http://localhost,http://localhost:8787,http://127.0.0.1:8787";
 
 const clients = new Set();
 const conversations = [];
+let cwdAllowlist = [];
 let activeConversationId;
 let activeMessages = [];
 let session;
@@ -44,8 +48,62 @@ function safeTitle(text) {
   return title || "新聊天";
 }
 
+function expandHome(input) {
+  const text = String(input || "").trim();
+  if (text === "~") return os.homedir();
+  if (text.startsWith(`~${path.sep}`)) return path.join(os.homedir(), text.slice(2));
+  return text;
+}
+
+function splitEnvList(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isPathInside(root, target) {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function canonicalDirectory(input) {
+  const absolute = path.resolve(expandHome(input));
+  const real = await fs.realpath(absolute);
+  const stat = await fs.stat(real);
+  if (!stat.isDirectory()) throw new Error("cwd must be a directory");
+  return real;
+}
+
+async function buildCwdAllowlist() {
+  const configured = [...splitEnvList(CWD_ALLOWLIST), CWD];
+  const roots = [];
+  for (const item of configured) {
+    try {
+      const real = await canonicalDirectory(item);
+      if (!roots.includes(real)) roots.push(real);
+    } catch (err) {
+      console.warn(`Ignoring invalid cwd allowlist entry ${item}:`, err.message || err);
+    }
+  }
+  if (!roots.length) throw new Error("no valid cwd allowlist entries");
+  return roots;
+}
+
+async function validateCwd(input) {
+  const real = await canonicalDirectory(input);
+  if (!cwdAllowlist.some((root) => isPathInside(root, real))) {
+    throw new Error("cwd is outside PI_MOBILE_CWD_ALLOWLIST");
+  }
+  return real;
+}
+
 function activeConversation() {
   return conversations.find((c) => c.id === activeConversationId);
+}
+
+function activeCwd() {
+  return activeConversation()?.cwd || CWD;
 }
 
 function conversationSummary(c) {
@@ -54,6 +112,7 @@ function conversationSummary(c) {
     title: c.title,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
+    cwd: c.cwd || CWD,
     sessionId: c.sessionId,
     sessionFile: c.sessionFile,
     isActive: c.id === activeConversationId,
@@ -200,13 +259,14 @@ function normalizeEvent(event) {
   return { name: "raw", data: event };
 }
 
-async function createConversationMeta(title = "新聊天") {
+async function createConversationMeta(title = "新聊天", cwd = CWD) {
   const t = now();
   const meta = {
     id: randomUUID(),
     title: safeTitle(title),
     createdAt: t,
     updatedAt: t,
+    cwd: await validateCwd(cwd),
     sessionId: undefined,
     sessionFile: undefined,
   };
@@ -224,6 +284,16 @@ async function loadConversations() {
   const data = await loadJson(indexPath, undefined);
   if (data && Array.isArray(data.conversations)) {
     conversations.push(...data.conversations);
+    for (const meta of conversations) {
+      try {
+        meta.cwd = await validateCwd(meta.cwd || CWD);
+      } catch (err) {
+        console.warn(`Conversation ${meta.id} has invalid cwd ${meta.cwd}, falling back to ${CWD}:`, err.message || err);
+        meta.cwd = await validateCwd(CWD);
+        meta.sessionId = undefined;
+        meta.sessionFile = undefined;
+      }
+    }
     activeConversationId = data.activeId || conversations[0]?.id;
   } else {
     const legacy = await loadJson(legacyChatLogPath, undefined);
@@ -251,16 +321,17 @@ async function bindSessionToConversation(id) {
   activeConversationId = id;
   activeMessages = await loadMessages(id);
 
-  let manager = meta.sessionFile ? SessionManager.open(meta.sessionFile) : SessionManager.create(CWD);
+  const cwd = meta.cwd || CWD;
+  let manager = meta.sessionFile ? SessionManager.open(meta.sessionFile) : SessionManager.create(cwd);
   let created;
   try {
-    created = await createAgentSession({ cwd: CWD, sessionManager: manager, modelRuntime });
+    created = await createAgentSession({ cwd, sessionManager: manager, modelRuntime });
   } catch (err) {
     console.warn(`Failed to open session file for conversation ${id}, creating a new session:`, err);
     meta.sessionFile = undefined;
     meta.sessionId = undefined;
-    manager = SessionManager.create(CWD);
-    created = await createAgentSession({ cwd: CWD, sessionManager: manager, modelRuntime });
+    manager = SessionManager.create(cwd);
+    created = await createAgentSession({ cwd, sessionManager: manager, modelRuntime });
   }
   session = created.session;
   meta.sessionId = session.sessionId;
@@ -279,13 +350,14 @@ async function bindSessionToConversation(id) {
 }
 
 async function initApp() {
+  cwdAllowlist = await buildCwdAllowlist();
   modelRuntime = await ModelRuntime.create({ modelsPath });
   await loadConversations();
   await bindSessionToConversation(activeConversationId);
 }
 
-async function newConversation(title = "新聊天") {
-  const meta = await createConversationMeta(title);
+async function newConversation(title = "新聊天", cwd = activeCwd()) {
+  const meta = await createConversationMeta(title, cwd);
   await bindSessionToConversation(meta.id);
   broadcast("chat_switched", { activeId: activeConversationId, conversation: conversationSummary(meta), messages: [] });
   broadcastConversations();
@@ -295,6 +367,24 @@ async function newConversation(title = "新聊天") {
 async function selectConversation(id) {
   await bindSessionToConversation(id);
   const meta = activeConversation();
+  broadcast("chat_switched", { activeId: activeConversationId, conversation: conversationSummary(meta), messages: activeMessages });
+  broadcastConversations();
+  return meta;
+}
+
+async function switchActiveCwd(nextCwd) {
+  if (session?.isStreaming) throw Object.assign(new Error("cannot switch cwd while agent is running"), { status: 409 });
+  const meta = activeConversation();
+  if (!meta) throw new Error("conversation not found");
+  const cwd = await validateCwd(nextCwd);
+  if (cwd === meta.cwd) return meta;
+  meta.cwd = cwd;
+  meta.sessionId = undefined;
+  meta.sessionFile = undefined;
+  meta.updatedAt = now();
+  await bindSessionToConversation(meta.id);
+  appendChat({ role: "system", text: `工作目录已切换为：${cwd}` });
+  broadcast("cwd_changed", { cwd, conversation: conversationSummary(meta), messages: activeMessages });
   broadcast("chat_switched", { activeId: activeConversationId, conversation: conversationSummary(meta), messages: activeMessages });
   broadcastConversations();
   return meta;
@@ -322,8 +412,22 @@ sessionReady = initApp().catch((err) => {
   console.error("Failed to initialize Pi session:", err);
 });
 
-function unauthorized(res) {
-  res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" });
+function corsHeaders(req) {
+  const origin = req.headers.origin;
+  const allowed = splitEnvList(CORS_ORIGINS);
+  if (!origin) return {};
+  if (!allowed.includes("*") && !allowed.includes(origin)) return {};
+  return {
+    "Access-Control-Allow-Origin": allowed.includes("*") ? "*" : origin,
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization,Content-Type",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+function unauthorized(req, res) {
+  res.writeHead(401, { ...corsHeaders(req), "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify({ error: "unauthorized" }));
 }
 
@@ -362,6 +466,7 @@ async function serveStatic(req, res, url) {
       ".js": "text/javascript; charset=utf-8",
       ".css": "text/css; charset=utf-8",
       ".json": "application/json; charset=utf-8",
+      ".webmanifest": "application/manifest+json; charset=utf-8",
       ".svg": "image/svg+xml",
       ".png": "image/png",
     }[ext] || "application/octet-stream";
@@ -373,27 +478,33 @@ async function serveStatic(req, res, url) {
   }
 }
 
-function sendJson(res, data, status = 200) {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+function sendJson(req, res, data, status = 200) {
+  res.writeHead(status, { ...corsHeaders(req), "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(data));
 }
 
 async function handleApi(req, res, url) {
-  if (!isAuthorized(req, url)) return unauthorized(res);
-  if (sessionError) return sendJson(res, { error: String(sessionError.message || sessionError) }, 500);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, corsHeaders(req));
+    res.end();
+    return;
+  }
+  if (!isAuthorized(req, url)) return unauthorized(req, res);
   await sessionReady;
+  if (sessionError) return sendJson(req, res, { error: String(sessionError.message || sessionError) }, 500);
 
   const conversationMatch = url.pathname.match(/^\/api\/conversations\/([^/]+)(?:\/([^/]+))?$/);
 
   if (req.method === "GET" && url.pathname === "/api/events") {
     res.writeHead(200, {
+      ...corsHeaders(req),
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
     clients.add(res);
-    sendEvent(res, "ready", { cwd: CWD, sessionId: session.sessionId, activeId: activeConversationId });
+    sendEvent(res, "ready", { cwd: activeCwd(), sessionId: session.sessionId, activeId: activeConversationId });
     const heartbeat = setInterval(() => sendEvent(res, "heartbeat", { t: Date.now() }), 25000);
     req.on("close", () => {
       clearInterval(heartbeat);
@@ -403,8 +514,9 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/state") {
-    return sendJson(res, {
-      cwd: CWD,
+    return sendJson(req, res, {
+      cwd: activeCwd(),
+      cwdAllowlist,
       activeConversationId,
       conversation: conversationSummary(activeConversation()),
       sessionId: session.sessionId,
@@ -416,71 +528,85 @@ async function handleApi(req, res, url) {
     });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/cwd") {
+    return sendJson(req, res, { cwd: activeCwd(), allowlist: cwdAllowlist });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cwd") {
+    const body = await readJson(req);
+    try {
+      const meta = await switchActiveCwd(body.cwd);
+      return sendJson(req, res, { ok: true, cwd: meta.cwd, conversation: conversationSummary(meta), messages: activeMessages });
+    } catch (err) {
+      return sendJson(req, res, { error: String(err.message || err), allowlist: cwdAllowlist }, err.status || 400);
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/api/thinking") {
-    return sendJson(res, {
+    return sendJson(req, res, {
       current: session.thinkingLevel,
       levels: session.getAvailableThinkingLevels(),
     });
   }
 
   if (req.method === "POST" && url.pathname === "/api/thinking") {
-    if (session.isStreaming) return sendJson(res, { error: "cannot switch thinking level while agent is running" }, 409);
+    if (session.isStreaming) return sendJson(req, res, { error: "cannot switch thinking level while agent is running" }, 409);
     const body = await readJson(req);
     const level = String(body.level || "");
     const levels = session.getAvailableThinkingLevels();
-    if (!levels.includes(level)) return sendJson(res, { error: "thinking level is not supported by current model", levels }, 400);
+    if (!levels.includes(level)) return sendJson(req, res, { error: "thinking level is not supported by current model", levels }, 400);
     session.setThinkingLevel(level);
     const data = { current: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
     broadcast("thinking_changed", data);
-    return sendJson(res, { ok: true, ...data });
+    return sendJson(req, res, { ok: true, ...data });
   }
 
   if (req.method === "GET" && url.pathname === "/api/models") {
-    return sendJson(res, {
+    return sendJson(req, res, {
       current: session.model ? { provider: session.model.provider, id: session.model.id, name: session.model.name } : null,
       models: await getConfiguredModels(),
     });
   }
 
   if (req.method === "POST" && url.pathname === "/api/model") {
-    if (session.isStreaming) return sendJson(res, { error: "cannot switch model while agent is running" }, 409);
+    if (session.isStreaming) return sendJson(req, res, { error: "cannot switch model while agent is running" }, 409);
     const body = await readJson(req);
     const provider = String(body.provider || "");
     const id = String(body.id || "");
     const configuredModels = await getConfiguredModels();
     const allowed = configuredModels.some((item) => item.provider === provider && item.id === id);
-    if (!allowed) return sendJson(res, { error: "model is not declared in models.json" }, 400);
+    if (!allowed) return sendJson(req, res, { error: "model is not declared in models.json" }, 400);
     const model = modelRuntime.getModel(provider, id);
-    if (!model) return sendJson(res, { error: "model not found" }, 404);
+    if (!model) return sendJson(req, res, { error: "model not found" }, 404);
     await session.setModel(model);
     const selected = publicModel(model);
     const thinking = { current: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
     broadcast("model_changed", { ...selected, thinking });
     broadcast("thinking_changed", thinking);
-    return sendJson(res, { ok: true, model: selected, thinking });
+    return sendJson(req, res, { ok: true, model: selected, thinking });
   }
 
   if (req.method === "GET" && url.pathname === "/api/conversations") {
-    return sendJson(res, { activeId: activeConversationId, conversations: conversations.map(conversationSummary) });
+    return sendJson(req, res, { activeId: activeConversationId, conversations: conversations.map(conversationSummary) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/conversations") {
     const body = await readJson(req);
-    const meta = await newConversation(body.title || "新聊天");
-    return sendJson(res, { ok: true, activeId: activeConversationId, conversation: conversationSummary(meta) });
+    const meta = await newConversation(body.title || "新聊天", body.cwd || activeCwd());
+    return sendJson(req, res, { ok: true, activeId: activeConversationId, conversation: conversationSummary(meta) });
   }
 
   if (conversationMatch) {
     const [, id, action] = conversationMatch;
     const meta = conversations.find((c) => c.id === id);
-    if (!meta) return sendJson(res, { error: "conversation not found" }, 404);
+    if (!meta) return sendJson(req, res, { error: "conversation not found" }, 404);
 
     if (req.method === "GET" && !action) {
-      return sendJson(res, { conversation: conversationSummary(meta), messages: await loadMessages(id) });
+      return sendJson(req, res, { conversation: conversationSummary(meta), messages: await loadMessages(id) });
     }
     if (req.method === "POST" && action === "select") {
       await selectConversation(id);
-      return sendJson(res, { ok: true, activeId: activeConversationId, conversation: conversationSummary(activeConversation()), messages: activeMessages });
+      return sendJson(req, res, { ok: true, activeId: activeConversationId, conversation: conversationSummary(activeConversation()), messages: activeMessages });
     }
     if (req.method === "PATCH" && !action) {
       const body = await readJson(req);
@@ -488,29 +614,29 @@ async function handleApi(req, res, url) {
       meta.updatedAt = now();
       persistIndexSoon();
       broadcastConversations();
-      return sendJson(res, { ok: true, conversation: conversationSummary(meta) });
+      return sendJson(req, res, { ok: true, conversation: conversationSummary(meta) });
     }
     if (req.method === "DELETE" && !action) {
       await deleteConversation(id);
-      return sendJson(res, { ok: true, activeId: activeConversationId });
+      return sendJson(req, res, { ok: true, activeId: activeConversationId });
     }
   }
 
   if (req.method === "GET" && url.pathname === "/api/messages") {
-    return sendJson(res, { activeId: activeConversationId, messages: activeMessages });
+    return sendJson(req, res, { activeId: activeConversationId, messages: activeMessages });
   }
 
   if (req.method === "POST" && url.pathname === "/api/prompt") {
     const body = await readJson(req);
     const message = String(body.message || "").trim();
-    if (!message) return sendJson(res, { error: "message required" }, 400);
+    if (!message) return sendJson(req, res, { error: "message required" }, 400);
 
     const displayMessage = String(body.displayMessage || message).trim();
     const entry = appendChat({ role: "user", text: displayMessage });
     broadcast("user_message", { ...entry, conversationId: activeConversationId });
     broadcastConversations();
 
-    sendJson(res, { ok: true, activeId: activeConversationId }, 202);
+    sendJson(req, res, { ok: true, activeId: activeConversationId }, 202);
 
     currentAssistantEntry = undefined;
     const images = Array.isArray(body.images) ? body.images : [];
@@ -521,16 +647,17 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/new-chat") {
-    const meta = await newConversation("新聊天");
-    return sendJson(res, { ok: true, activeId: activeConversationId, sessionId: session.sessionId, conversation: conversationSummary(meta) });
+    const body = await readJson(req);
+    const meta = await newConversation("新聊天", body.cwd || activeCwd());
+    return sendJson(req, res, { ok: true, activeId: activeConversationId, sessionId: session.sessionId, conversation: conversationSummary(meta) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/abort") {
     await session.abort();
-    return sendJson(res, { ok: true });
+    return sendJson(req, res, { ok: true });
   }
 
-  return sendJson(res, { error: "not found" }, 404);
+  return sendJson(req, res, { error: "not found" }, 404);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -540,7 +667,7 @@ const server = http.createServer(async (req, res) => {
     else await serveStatic(req, res, url);
   } catch (err) {
     console.error(err);
-    if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+    if (!res.headersSent) res.writeHead(500, { ...corsHeaders(req), "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({ error: String(err.message || err) }));
   }
 });
@@ -548,6 +675,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Pi Mobile listening on http://${HOST}:${PORT}`);
   console.log(`cwd=${CWD}`);
+  console.log(`cwdAllowlist=${CWD_ALLOWLIST}`);
   if (TOKEN === "dev-token-change-me") console.warn("WARNING: using default PI_MOBILE_TOKEN. Set a strong token before exposing this service.");
 });
 

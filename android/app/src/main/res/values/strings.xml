@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Pi Mobile</string>
+    <string name="title_activity_main">Pi Mobile</string>
+    <string name="package_name">com.pimobile.agent</string>
+    <string name="custom_url_scheme">com.pimobile.agent</string>
+</resources>

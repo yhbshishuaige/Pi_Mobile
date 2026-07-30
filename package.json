@@ -13,6 +13,9 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@capacitor/android": "7.4.3",
+    "@capacitor/cli": "7.4.3",
+    "@capacitor/core": "7.4.3",
     "@earendil-works/pi-coding-agent": "^0.82.1",
     "@highlightjs/cdn-assets": "^11.11.1",
     "highlight.js": "^11.11.1"

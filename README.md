@@ -31,6 +31,9 @@ Pi Mobile 是一个“手机上的私有 Pi Agent App”项目：手机端提供
 - 支持在 WebUI 中调整当前模型的思考强度，并根据模型能力动态显示可用级别。
 - 支持上传图片：通过 Pi SDK `images` 传给模型。
 - 支持上传文本类文档：前端读取文本内容后拼接进 prompt。
+- 支持每个会话切换 Agent 工作目录，后端用 `PI_MOBILE_CWD_ALLOWLIST` 限制可选范围。
+- 支持 Capacitor/PWA 客户端跨源调用：后端为 `/api/*` 增加 CORS 和 `OPTIONS` 预检支持。
+- 支持 PWA manifest 和基础静态资源缓存，可添加到手机桌面。
 - 默认只监听 `127.0.0.1:8787`，建议通过 Nginx/Caddy 反代 HTTPS 后访问。
 
 ## 目录结构
@@ -43,7 +46,9 @@ Pi Mobile 是一个“手机上的私有 Pi Agent App”项目：手机端提供
 ├── public
 │   ├── index.html         # 手机 Web UI
 │   ├── app.js             # 前端逻辑
-│   └── style.css          # 前端样式
+│   ├── style.css          # 前端样式
+│   ├── manifest.webmanifest # PWA 配置
+│   └── sw.js              # PWA 静态资源缓存 Service Worker
 ├── capacitor.config.json  # Capacitor 原生客户端配置（本地开发中，未提交）
 ├── android/               # Capacitor 生成的 Android 工程（本地开发中，未提交）
 └── data
@@ -87,7 +92,9 @@ PI_MOBILE_HOST=0.0.0.0 PI_MOBILE_TOKEN='强密码' npm start
 | `PI_MOBILE_TOKEN` | `dev-token-change-me` | 前端登录和 API 鉴权 token。生产环境必须改。 |
 | `PI_MOBILE_HOST` | `127.0.0.1` | 服务监听地址。建议保持本机监听。 |
 | `PI_MOBILE_PORT` | `8787` | 服务端口。 |
-| `PI_MOBILE_CWD` | `/root` | Pi Agent 的工作目录。 |
+| `PI_MOBILE_CWD` | `/root` | Pi Agent 的默认工作目录。 |
+| `PI_MOBILE_CWD_ALLOWLIST` | 同 `PI_MOBILE_CWD` | 允许切换到的工作目录范围，多个路径用英文逗号分隔；目标 cwd 必须位于其中之一。 |
+| `PI_MOBILE_CORS_ORIGINS` | `capacitor://localhost,http://localhost,http://localhost:8787,http://127.0.0.1:8787` | 允许跨源访问 `/api/*` 的 Origin，多个值用英文逗号分隔。 |
 
 ## API 设计
 
@@ -153,6 +160,22 @@ Authorization: Bearer <token>
 ```
 
 后端只允许选择 `~/.pi/agent/models.json` 中声明的模型，返回结果不包含 `apiKey`、`baseUrl` 或私有 headers。Agent 正在运行时不允许切换模型。
+
+### 获取和切换工作目录
+
+```http
+GET /api/cwd
+POST /api/cwd
+Authorization: Bearer <token>
+```
+
+切换请求示例：
+
+```json
+{"cwd":"/root/pi-mobile"}
+```
+
+后端会解析真实路径并检查它是否位于 `PI_MOBILE_CWD_ALLOWLIST` 内。Agent 正在运行时不允许切换；切换后当前会话会创建新的 Pi SDK Session，并保留 Pi Mobile 展示历史。
 
 ### 获取和切换思考强度
 
@@ -244,6 +267,8 @@ Authorization: Bearer <token>
 - [x] WebUI 思考强度选择器和后端切换 API。
 - [x] 上传图片按钮。
 - [x] 上传文档按钮。
+- [x] Capacitor/PWA API Base URL 适配。
+- [x] 后端 CORS 与 `OPTIONS` 预检支持。
 
 验收标准：
 
@@ -258,7 +283,7 @@ Authorization: Bearer <token>
 - [x] 会话列表。
 - [x] 恢复历史会话。
 - [x] 显示/修改会话标题。
-- [ ] 支持切换 cwd。
+- [x] 支持切换 cwd。
 - [ ] 每个会话独立事件流和消息历史。
 
 ### Phase 3：权限和安全
@@ -266,20 +291,20 @@ Authorization: Bearer <token>
 - [ ] 工具调用前置审批。
 - [ ] 危险 bash 命令拦截。
 - [ ] 敏感文件保护。
-- [ ] cwd allowlist。
+- [x] cwd allowlist。
 - [ ] 只读模式。
 - [ ] 审计日志。
 
 ### Phase 4：移动端体验
 
-- [ ] PWA manifest。
-- [ ] 添加到手机桌面。
-- [ ] Markdown 渲染。
-- [ ] 代码块复制按钮。
+- [x] PWA manifest。
+- [x] 添加到手机桌面。
+- [x] Markdown 渲染。
+- [x] 代码块复制按钮。
 - [ ] 工具调用折叠/展开。
-- [ ] 图片上传，映射到 Pi SDK images。
+- [x] 图片上传，映射到 Pi SDK images。
 
-### Phase 5：Android 原生 App（进行中，改在本地电脑继续）
+### Phase 5：Android 原生 App（已生成 debug APK）
 
 目标：用 Capacitor 将现有 WebUI 打包为私用 Android App。Agent、模型凭据、会话和服务器操作能力仍留在服务器；App 只是原生客户端。
 
@@ -291,19 +316,20 @@ Authorization: Bearer <token>
 - [x] 前端识别 Capacitor 环境后，默认使用 `http://39.105.119.235:8787` 作为 API Base URL；浏览器模式继续使用同源 `/api/...`。
 - [x] Android Manifest 已设置 `android:usesCleartextTraffic="true"`，因为目前按个人使用需求直接通过服务器 IP 使用 HTTP。
 - [x] 后端本地改动已添加 CORS 与 `OPTIONS` 预检支持，允许 Capacitor WebView 调用 API。
-- [x] 服务器侧已安装 Java 17、Gradle 8.14.3 wrapper、Android SDK Platform 36、Build Tools 36.0.0。
-- [ ] 尚未成功生成 `app-debug.apk`；没有构建错误结论，也没有 APK 产物。
+- [x] 本机已安装/准备 Node.js、Android SDK、Gradle，并在用户目录解压 JDK 21 用于 Capacitor Android 构建。
+- [x] 已成功生成 debug APK：`android/app/build/outputs/apk/debug/app-debug.apk`。
+- [x] APK 包名为 `com.pimobile.agent`，版本 `1.0`，大小约 4.0 MB，SHA-256 为 `a2db5449fe7bf48d22d3bd6d0a37084093e87598864ffb2e4fded67cb4d5f7a4`。
 
-停止原因：Android Gradle 首次构建会下载/解析大量依赖，服务器 CPU 使用率被占满。不要继续在服务器构建 APK。
+构建说明：当前环境无法稳定下载 Gradle Wrapper 分发包，因此实际构建使用本机已有 Gradle 8.10.2，并通过 `JAVA_HOME=$HOME/.local/share/android-toolchain/jdk21-root/usr/lib/jvm/java-21-openjdk-amd64` 指向本地解压的 JDK 21。
 
 在个人电脑继续的建议流程：
 
 1. 从本仓库拉取最新 `main`。
-2. 安装 Node.js 20+、JDK 17、Android Studio 和 Android SDK Platform 36 / Build Tools 36.0.0。
+2. 安装 Node.js 20+、JDK 21、Android Studio 和 Android SDK Platform 35+ / Build Tools 35+。
 3. 安装 Capacitor 依赖：
 
    ```bash
-   npm install @capacitor/core @capacitor/cli @capacitor/android
+   npm install @capacitor/core@7.4.3 @capacitor/cli@7.4.3 @capacitor/android@7.4.3
    ```
 
 4. 创建 `capacitor.config.json`：
@@ -343,6 +369,9 @@ Authorization: Bearer <token>
    ```bash
    cd android
    ./gradlew assembleDebug
+
+   # 如果 Gradle Wrapper 下载失败，也可以使用本机 Gradle：
+   gradle assembleDebug --no-daemon
    ```
 
 10. 成功后 APK 路径为：
@@ -361,7 +390,7 @@ Authorization: Bearer <token>
 - 手机能访问服务器 IP 和 `8787` 端口。
 - HTTP 明文访问仅适用于私用测试；Token 会明文传输，后续仍应改为 HTTPS。
 
-本轮 Android 相关代码、`android/`、Capacitor 依赖和 CORS 改动目前只存在服务器本地工作区，按当前要求不会上传 GitHub。接手者应在本地电脑重新实现或从这台服务器复制工作区后继续。
+本轮 Android 相关代码、`android/`、Capacitor 依赖、CORS 改动和 debug APK 目前都在当前工作区。
 
 ### Phase 6：通知和自动化
 
